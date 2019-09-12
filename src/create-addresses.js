@@ -1,6 +1,8 @@
 /*
   Generates a series of PDF files with QR codes. Each QR code is a 'child' of
   the mothership wallet.
+
+  Also creates a JSON file with data needed to work with generated addresses.
 */
 
 "use strict"
@@ -17,7 +19,15 @@ const chalk = require("chalk")
 const addresses = []
 const htmlTemplate = require("./html-template")
 
+// A promise-based sleep function.
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+// pubList contains the public addresses for the tickets generated, and is
+// safe to share publically. priveList contains the public address and the
+// private key WIF for generated addresses, and is not safe to share publically.
+const pubList = []
+const privList = []
+
 // Open the wallet generated with generate-wallet.
 const main = async () => {
   let mnemonicObj
@@ -42,6 +52,9 @@ const main = async () => {
   mkdirp(`${pdfDir}`, err => {})
   mkdirp(`${pdfDir}/privKeyWIFs`, err => {})
 
+  const jsonDir = `${__dirname}/../output/json`
+  mkdirp(`${jsonDir}`, err => {})
+
   // root seed buffer
   const rootSeed = BITBOX.Mnemonic.toSeed(mnemonicObj.mnemonic)
 
@@ -61,9 +74,22 @@ const main = async () => {
       `0'/0/${i}`
     )
 
+    // Generate the public address.
+    const pubAddr = BITBOX.HDNode.toCashAddress(node)
+
     // get the priv key in wallet import format
     const wif = BITBOX.HDNode.toWIF(node)
     //console.log(`WIF for address ${i}: ${wif}`)
+
+    // Add the public address to the public list.
+    pubList.push(pubAddr)
+
+    // Add the public and private info to the private list.
+    const privData = {
+      addr: pubAddr,
+      wif: wif
+    }
+    privList.push(privData)
 
     // create empty html file
     touch(`${htmlDir}/privKeyWIFs/paper-wallet-wif-${i}.html`)
@@ -101,8 +127,39 @@ const main = async () => {
         if (err) return console.log(err)
       })
   }
+
+  // Write out the public data to a JSON file for later processing.
+  await writeFile(
+    JSON.stringify(pubList, null, 2),
+    `${jsonDir}/public-addresses.json`
+  )
+
+  // Combine mothership wallet and private data list into a single JSON file.
+  const privData = {
+    mothership: mnemonicObj,
+    children: privList
+  }
+  await writeFile(
+    JSON.stringify(privData, null, 2),
+    `${jsonDir}/private-addresses.json`
+  )
+
   console.log(chalk.green("All done."), emoji.get(":white_check_mark:"))
   console.log(emoji.get(":rocket:"), `html and pdfs written successfully.`)
 }
 
 main()
+
+// Expects an input string and write the file to the file path.
+async function writeFile(inStr, filePath) {
+  try {
+    fs.writeFile(filePath, inStr, err => {
+      if (err) throw err
+
+      console.log(`Successfully wrote to file ${filePath}`)
+    })
+  } catch (err) {
+    console.error(`Error in create-addresses.js/writeFile()`)
+    throw err
+  }
+}
